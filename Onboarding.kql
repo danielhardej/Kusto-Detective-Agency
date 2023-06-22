@@ -1,0 +1,84 @@
+
+
+// Let's see how many bounties were paid out for each EventType
+
+DetectiveCases
+| extend bounty = toreal(Properties.Bounty)
+| where bounty > 0
+| summarize count(bounty) by EventType
+
+// EventType    count_bounty
+// CaseOpened	111255
+
+// Strange, bounty only appears in records with the event type CaseOpened. Let's see which case paid out the biggest bounty
+
+DetectiveCases
+| extend bounty = toreal(Properties.Bounty)
+| top 10 by bounty desc
+
+// 2022-04-15T13:39:00Z	CaseOpened		CASE_0367822	{"Bounty":9778}	9778
+// 2022-05-05T08:19:00Z	CaseOpened		CASE_0427007	{"Bounty":9049}	9049
+// 2022-02-08T06:50:00Z	CaseOpened		CASE_0164498	{"Bounty":9003}	9003
+// 2022-04-23T22:40:00Z	CaseOpened		CASE_0393524	{"Bounty":8945}	8945
+// 2022-03-29T05:03:00Z	CaseOpened		CASE_0313869	{"Bounty":8918}	8918
+// 2022-06-25T08:41:00Z	CaseOpened		CASE_0582450	{"Bounty":8884}	8884
+// 2022-10-23T03:48:00Z	CaseOpened		CASE_0948098	{"Bounty":8728}	8728
+// 2022-06-21T05:12:00Z	CaseOpened		CASE_0569064	{"Bounty":8692}	8692
+// 2022-01-19T01:30:00Z	CaseOpened		CASE_0103765	{"Bounty":8682}	8682
+// 2022-12-03T08:22:00Z	CaseOpened		CASE_1073843	{"Bounty":8677}	8677
+
+// How many cases did each detective solve?
+
+DetectiveCases
+| where EventType == 'CaseSolved'
+| summarize CasesSolved=count() by DetectiveId
+
+// Let's look at the time difference between the event of 'CaseOpened' and 'CaseAssigned' for each case. We can create
+// a new column called TTA (Time To Assignment) and store the difference between the two events:
+
+DetectiveCases
+| where EventType == 'CaseOpened'
+| project CaseOpened = Timestamp, CaseId
+| join kind=inner (
+    DetectiveCases
+    | where EventType == 'CaseAssigned'
+    | summarize FirstAssigned=min(Timestamp) by CaseId)
+    on CaseId
+| extend TTA = FirstAssigned - CaseOpened
+| order by TTA desc 
+
+// CaseOpened	        CaseId	        CaseId1         FirstAssigned	        TTA
+// 2022-01-21T15:39:00Z	CASE_0111872	CASE_0111872	2022-02-01T06:22:00Z	10.14:43:00
+// 2022-02-07T10:03:00Z	CASE_0162027	CASE_0162027	2022-02-16T19:31:00Z	9.09:28:00
+// 2022-01-28T19:19:00Z	CASE_0133812	CASE_0133812	2022-02-05T16:38:00Z	7.21:19:00
+// 2022-02-09T03:48:00Z	CASE_0167129	CASE_0167129	2022-02-16T10:47:00Z	7.06:59:00
+
+// Or we can change the last line to this to get the average TTA for each detective:
+| summarize average=avg(FirstAssigned - CaseOpened) // 09:18:50.7488963
+
+// Or we can change the last line to find the shortest TTA for each detective:
+| summarize arg_min(TTA, CaseId)                    // 00:01:00	CASE_1126129
+
+// Or we can change the last line to find the longest TTA for each detective:
+| summarize arg_max(TTA, CaseId)                    // 10.14:43:00	CASE_0111872
+
+
+// Then we can do the same to see how long it took for each detective to solve a case:
+
+DetectiveCases
+| where EventType == 'CaseSolved'
+| project CaseSolved = Timestamp, CaseId, DetectiveId
+| join kind=inner (
+    DetectiveCases
+    | where EventType == 'CaseAssigned'
+    | summarize FirstAssigned=min(Timestamp) by CaseId)
+    on CaseId
+| extend TTS = CaseSolved - FirstAssigned
+| order by TTS asc
+
+// CaseSolved	        CaseId	        DetectiveId	            CaseId1	        FirstAssigned	        TTS
+// 2022-12-28T19:57:00Z	CASE_1151950	kvc438d18e10ac9cae3413	CASE_1151950	2022-12-28T19:56:00Z	00:01:00
+// 2022-12-10T18:17:00Z	CASE_1095704	kvc753a3d5c7c969c0c1d3	CASE_1095704	2022-12-10T18:16:00Z	00:01:00
+// 2022-12-03T10:59:00Z	CASE_1072633	kvc4f44da9cc91d10f47b2	CASE_1072633	2022-12-03T10:58:00Z	00:01:00
+// 2022-04-16T03:23:00Z	CASE_0368834	kvc6ab04081daea94e55fa	CASE_0368834	2022-04-16T03:21:00Z	00:02:00
+// 2022-06-21T22:24:00Z	CASE_0570345	kvc19cad60aa5682bf40bc	CASE_0570345	2022-06-21T22:22:00Z	00:02:00
