@@ -1,0 +1,190 @@
+// First take a look at the locations of the stolen cars. Use a simple innerjoin on VIN to find location details
+// as the StolenCars table only as VIN information
+
+CarsTraffic
+| join (
+    StolenCars
+    ) on VIN
+
+// Timestamp            VIN         Ave St  VIN1
+// 2023-06-10T12:15:30Z	SI241398E	18	124	SI241398E
+// 2023-06-10T13:26:00Z	IN149152E	193	133	IN149152E
+// 2023-06-10T14:28:00Z	NJ586451R	119	144	NJ586451R
+// 2023-06-10T15:22:00Z	BV850698T	159	212	BV850698T
+// 2023-06-12T01:22:30Z	PR843817F	277	71	PR843817F
+// 2023-06-12T06:26:30Z	PV340883B	107	147	PV340883B
+// 2023-06-13T03:27:00Z	SA732295L	73	86	SA732295L
+// 2023-06-13T07:26:00Z	EL438126P	43	208	EL438126P
+// 2023-06-13T17:01:30Z	LP489241B	122	176	LP489241B
+// 2023-06-13T20:02:30Z	IR177866Y	188	252	IR177866Y
+// 2023-06-14T01:21:00Z	LG232761G	76	175	LG232761G
+// 2023-06-14T03:38:00Z	VB724416I	73	159	VB724416I
+// 2023-06-14T05:41:30Z	DO255727O	222	108	DO255727O
+// 2023-06-14T20:43:30Z	KU388194T	96	43	KU388194T
+// 2023-06-15T02:23:30Z	AS483204L	115	73	AS483204L
+// 2023-06-15T04:15:00Z	YZ347238C	143	240	YZ347238C
+// 2023-06-15T04:28:30Z	MW406687Q	107	117	MW406687Q
+// 2023-06-15T09:50:30Z	ZJ786806D	174	215	ZJ786806D
+// 2023-06-16T00:43:00Z	GA871473A	149	222	GA871473A
+// 2023-06-16T04:57:00Z	CK552050Z	159	68	CK552050Z
+
+
+
+// --------------------------------------------------------------------------------------------------------------------------------
+// Use the in operator to figure out what was the stolen car with the most sightings?
+
+CarsTraffic
+| where VIN == "IR177866Y"
+// sort by time
+| sort by Timestamp asc
+
+// VIN         count_
+// IR177866Y	592
+// DO255727O	574
+// ZJ786806D	574
+// SI241398E	546
+// LG232761G	518
+// SA732295L	486
+// NJ586451R	458
+// PV340883B	398
+// KU388194T	360
+// MW406687Q	336
+// LP489241B	324
+// VB724416I	314
+// EL438126P	266
+// AS483204L	262
+// IN149152E	178
+// CK552050Z	172
+// BV850698T	166
+// PR843817F	150
+// GA871473A	126
+// YZ347238C	68
+
+
+
+// --------------------------------------------------------------------------------------------------------------------------------
+// On which street and avenue was stolen car with VIN number IR177866Y first sighted?
+
+// Let's use the arg_min() aggregation function to find the first sighting of the car with VIN number IR177866Y, as they suggested.
+
+CarsTraffic
+| where VIN=="IR177866Y"
+| summarize arg_min(Timestamp, VIN, Ave, Street)
+
+// Timestamp            VIN         Ave St 
+// 2023-06-13T19:25:00Z	IR177866Y	  134	266
+
+
+
+// --------------------------------------------------------------------------------------------------------------------------------
+// How many cars have been at Street 228, Ave 145 but have never been sighted at location Street 121, Ave 180?
+
+CarsTraffic
+| where Ave == 145 and Street == 228
+| where not(Ave == 180 and Street == 121)
+| summarize dcount(VIN)
+
+// dcount_VIN  
+// 1238
+
+// But that's not the right answer. The actual query you need to use is:
+
+CarsTraffic
+| where Ave == 145 and St == 228
+| join kind=leftanti (
+    CarsTraffic
+    | where Ave == 180 and St == 121
+    ) on VIN
+| distinct VIN
+| count
+
+// count_
+// 1220
+
+
+// --------------------------------------------------------------------------------------------------------------------------------
+// Where are the stolen cars being kept?
+
+// The main event!
+
+// First, we need to know where the VIN numbers are being changed. We have the VINs of the stolen cars in StolenCars, so we 
+// can track where the stolen cars end up by finding the locations the cars are being taken to by joining the CarsTraffic and 
+// StolenCars on VIN.
+
+CarsTraffic
+| join kind = inner (StolenCars)
+  on VIN
+
+// We get a E_LOW_MEMORY_CONDITION error, so let's find another way:
+
+CarsTraffic
+| where VIN in ('LG232761G', 'SA732295L', 'MW406687Q', 'PR843817F', 'EL438126P', 'GA871473A', 'IR177866Y', 'LP489241B', 'AS483204L', 'DO255727O', 'BV850698T', 'YZ347238C', 'NJ586451R', 'VB724416I', 'SI241398E', 'IN149152E', 'PV340883B', 'CK552050Z', 'ZJ786806D')
+| order by Timestamp desc 
+| summarize count(VIN) by Street, Ave
+| order by count_VIN
+
+// Or to find where the cars were last seen:
+CarsTraffic
+| where VIN in ('LG232761G', 'SA732295L', 'MW406687Q', 'PR843817F', 'EL438126P', 'GA871473A', 'IR177866Y', 'LP489241B', 'AS483204L', 'DO255727O', 'BV850698T', 'YZ347238C', 'NJ586451R', 'VB724416I', 'SI241398E', 'IN149152E', 'PV340883B', 'CK552050Z', 'ZJ786806D')
+| summarize arg_max(Timestamp, *) by VIN
+| order by Ave
+| summarize count(VIN) by Street, Ave
+
+
+// So now we're onto something. A lot of cars end up at Street=86 and Ave=223, but after entering this as the answer
+// it was wrong. So this could be a red herring, OR it could mean that this is where the plates are being changed.
+// Recall that they tell us: "It's possible that the car's identification plates were replaced during the robbery".
+// So let's look at how many unique VINs are at this location:
+
+CarsTraffic
+| where (Street == 86 and Ave == 223)
+| summarize dcount(VIN)
+
+// dcount_VIN
+// 20440
+
+CarsTraffic
+| where (Street == 86 and Ave == 223)
+| summarize count(VIN) by Street, Ave
+| order by count_VIN
+
+// Street	Ave	count_VIN
+// 86	    223	20517
+
+// So 20517 cars end up at this location, or 20440 unique VINs. So it's plausible that the VINs are being changed here. That sounds
+// like a lot, but compared to the total of 133,573,458 cars in the dataset, we've narrowed down a LOT!
+
+// So next lets say that Street 86 and Ave 223 is where the VINs are being changed. Now we need to find out where the cars are being taken after that.
+// We can do this by firstly creating a table of VINs after we see it at Street 86 and Ave 223. We'll call this table _suspect_locations.
+// Then we'll write a query to find the last location of each car AFTER it's seen at Street 86 and Ave 223, sort these by the Timestamp and
+// by the number of unique VINs at each location, then look at the location with the largest number of unique VINs.
+
+let _suspect_change_street = 86;
+let _suspect_change_ave = 223;
+let _suspect_locations = 
+CarsTraffic
+| where (Street == _suspect_change_street and Ave == _suspect_change_ave)
+| summarize arg_min(Timestamp, *) by VIN;
+CarsTraffic
+| where VIN in (_suspect_locations)
+| summarize arg_max(Timestamp, *) by VIN
+| summarize n_vins = count(VIN) by Ave, Street
+| order by n_vins desc 
+| where n_vins <= 20
+
+// First result:
+// Ave	Street	Vins
+// 223	86	    4923
+// 122	251	    846
+// 156	81	    13
+
+// Second result:
+// Ave	Street	Vins
+// 156	81	    13
+// 223	66	    10
+// 223	48	    8
+
+// Initially I took the top result by n_vins, but it wasn't the top one! This actually makes sense if you think about it.
+// The stolen cars are being taken to the same place (we assumed!), but how feasible is it to steal - let along store - 4923 cars
+// in one place? Or even 846 as we saw in the next one. So then I condidered the fact that there are 20 cars in the StolenCars 
+// table and added the line `| where n_vins <= 20`. This gave 13 stolen car VINs at one place, which is more realistic.

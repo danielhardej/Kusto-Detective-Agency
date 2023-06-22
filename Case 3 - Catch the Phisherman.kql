@@ -1,0 +1,76 @@
+// Use both equals (==) and 'has' operators to find the phone number that originated the most non hidden calls.
+
+    PhoneCalls
+    | where EventType=="Connect"
+    | extend Destination = tostring(Properties.Destination)
+    | extend Origin = tostring(Properties.Origin)
+    // didn't actually need those last two lines!
+    | where tobool(Properties.IsHidden)==false or Properties !has "IsHidden" // we want to find the number that originated the most non hidden calls
+    | summarize Count=count() by Phone=tostring(Properties.Origin)
+    | top 1 by Count
+
+//Output:
+
+// What is the average and median (50th percentile) of calls per hour?
+
+    PhoneCalls
+    | where EventType=="Connect" // the question didn't actually specifiy that we should only look at connect events, so I initally looked at ALL calls, but looking back on it that makes sense!
+    | summarize Count=count() by Hour=bin(Timestamp, 1h)
+    | summarize Avg=avg(Count), Median=percentile(Count, 50) // median is the 50th percentile
+    | project Avg, Median
+
+//Output:
+// Avg	Median
+// 49048	32069
+
+
+// How many calls did Sally Sunshine (phone number 06309267053) receive and hang up on?
+
+    PhoneCalls
+    | where EventType=="Connect"
+    | where Properties.Destination == "06309267053"
+    | join kind=inner
+        (PhoneCalls
+        | where EventType=="Disconnect"
+        | extend DisconnectedBy = tostring(Properties.DisconnectedBy))
+        on CallConnectionId
+    | where DisconnectedBy == "Destination"
+    | count
+
+// Output:
+// 16
+
+
+// What phone number is used for placing the phishing calls?
+
+    PhoneCalls 
+    | where EventType=="Connect"
+    | extend Destination = tostring(Properties.Destination)
+    | extend Origin = tostring(Properties.Origin)
+    | where Properties.IsHidden==true
+    | join kind=inner
+        (PhoneCalls
+        | where EventType=="Disconnect"
+        | extend DiscBy = tostring(Properties.DisconnectedBy)
+        | where DiscBy == "Destination")
+        on CallConnectionId
+    | summarize Ncalls=dcount(Destination) by Origin
+    // show the top 10 origin callers to show that the top one has by far the most and the next nine are quite close to eachother in number of calls
+    // indicating that the top one is the origin number of the scammer
+    | top 10 by Ncalls
+
+
+//Output:
+// Origin	Scammer
+// 06784884765	186
+// 06749360920	50
+// 06836757512	46
+// 06824111174	44
+// 06131902860	42
+// 06904223620	42
+// 06827437897	42
+// 06616686612	42
+// 06671080069	42
+// 06888393421	42
+
+// We can see that the top one is 06784884765 with 186 calls - far more than the next nine numbers, which all have around 40 to 50 call as the origin number.
