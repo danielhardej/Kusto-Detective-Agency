@@ -72,12 +72,12 @@ DetectiveCases
 // 2022-02-09T03:48:00Z	CASE_0167129	CASE_0167129	2022-02-16T10:47:00Z	7.06:59:00
 
 // Or we can change the last line to this to get the average TTA for each detective:
-| summarize average=avg(FirstAssigned - CaseOpened) // 09:18:50.7488963
+| summarize average=avg(FirstAssigned - CaseOpened)     // 09:18:50.7488963
 
-// Or we can change the last line to find the shortest TTA for each detective:
+// Or we can change the last line to find the shortest TTA:
 | summarize arg_min(TTA, CaseId)                    // 00:01:00	CASE_1126129
 
-// Or we can change the last line to find the longest TTA for each detective:
+// Or we can change the last line to find the longest TTA:
 | summarize arg_max(TTA, CaseId)                    // 10.14:43:00	CASE_0111872
 
 
@@ -159,6 +159,8 @@ DetectiveCases
 DetectiveCases
 | where EventType == 'CaseSolved'
 | summarize dcount(DetectiveId)
+
+// 10967
 
 
 
@@ -252,7 +254,7 @@ DetectiveCases
 // CASE_0800040	18
 // etc.
 
-// So we can see from this query that nearly every case has multiple detectives assigned to it. So we need to find the first detective to crack the case.
+// We can see from this query that nearly every case has multiple detectives assigned to it. So we need to find the first detective to crack the case.
 
 DetectiveCases
 | where EventType == 'CaseSolved'
@@ -266,13 +268,12 @@ DetectiveCases
 // CASE_0007140	2022-01-01T00:12:00Z	kvc3faec621b9657cfe581
 // CASE_0026925	2022-01-01T00:13:00Z	kvc37452d89cf87d5885b2
 
-// This query will get all of our solved cases and then find the earliest timestamp for which that case was solved and the DetectiveId associated with that timestamp. We then need to 
+// This query will get all of our solved cases and then find the earliest timestamp at which that case was solved and the DetectiveId associated with that timestamp. We then need to 
 // make sure we sort by CaseId so we can join it with our bounties table on CaseId.
 
 // Putting it all together:
 
-let bounties =
-    DetectiveCases
+let bounties = DetectiveCases
     | where EventType == 'CaseOpened'
     | extend bounty = toreal(Properties.Bounty);
 let first_detective_solved = DetectiveCases
