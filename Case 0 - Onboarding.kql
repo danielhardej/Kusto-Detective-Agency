@@ -280,7 +280,7 @@ let first_detective_solved = DetectiveCases
     | where EventType == 'CaseSolved'
     | summarize arg_min(Timestamp, DetectiveId) by CaseId;
 DetectiveCases
-| join kind=inner Winner on CaseId
+| join kind=inner first_detective_solved on CaseId
 | join kind=inner bounties on CaseId
 | summarize total_detective_bounty=sum(bounty) by DetectiveId1
 | order by total_detective_bounty
