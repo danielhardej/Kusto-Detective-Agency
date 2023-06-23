@@ -1,0 +1,237 @@
+// Take a quick glance at the tables:
+
+Costs
+// MeterType    Unit    Cost
+// Water	    Liter	0.001562
+// Electricity	kwH	    0.3016
+
+Consumption
+| count 
+// 7617835
+
+Consumption
+| take 10 
+// Timestamp            Household           MeterType   Consumption
+// 2023-04-19T00:00:00Z	DTI37435952EDC35CA2	Water	    577.5552681928441
+// 2023-04-19T00:00:00Z	DTI37435952EDC35CA2	Electricity	27.015182320739996
+// 2023-04-19T00:00:00Z	DTI10BBCBABD9B41457	Water	    697.5436848975105
+// 2023-04-19T00:00:00Z	DTI10BBCBABD9B41457	Electricity	28.751603406879738
+// 2023-04-19T00:00:00Z	DTI6A343E04C584CC0C	Water	    695.1567568989261
+// 2023-04-19T00:00:00Z	DTI6A343E04C584CC0C	Electricity	31.33985498258015
+// 2023-04-19T00:00:00Z	DTI43ACA85DB17583C2	Water	    633.4438162380928
+// 2023-04-19T00:00:00Z	DTI43ACA85DB17583C2	Electricity	26.99088209569873
+// 2023-04-19T00:00:00Z	DTI1D251AB69D463B77	Water	    620.0617919202995
+// 2023-04-19T00:00:00Z	DTI1D251AB69D463B77	Electricity	33.92641603510893
+
+// We can use EXPLAIN to get this ugly SQL query that gets us the total amout billed:
+
+EXPLAIN
+SELECT SUM(Consumed * Cost) AS TotalCost 
+FROM Costs 
+JOIN Consumption ON Costs.MeterType = Consumption.MeterType 
+
+// To give us this ugly KQL query:
+
+Costs
+| join kind=inner 
+(Consumption
+| project-rename ['Consumption.MeterType']=MeterType) on (['$left'].MeterType == ['$right'].['Consumption.MeterType'])
+| summarize TotalCost=sum(__sql_multiply(Consumed, Cost))
+| project TotalCost
+
+// Which we can tidy up to look like this (0.456s):
+
+Consumption
+| join kind=inner Costs on MeterType
+| summarize TotalCost=sum(Consumed * Cost)
+
+// or like this (0.467s):
+
+Consumption
+| join kind=inner Costs on MeterType
+| extend TotalCost=Consumed * Cost
+| summarize sum(TotalCost)
+
+// which gives:
+
+// TotalCost
+// 35637875.1977086
+
+// but in the case we're given this one:
+
+Consumption  
+| summarize TotalConsumed = sum(Consumed) by MeterType  
+| lookup Costs on MeterType  
+| extend TotalCost = TotalConsumed*Cost  
+| summarize sum(TotalCost) 
+
+// which gives the same result, but runs faster in 0.244s (which makes sense, given that
+// we don't have to use join)
+
+// --------------------------------------------------------------------------------------------------
+// What is the HouseholdId that is paying highest water consumption tax?
+
+Consumption
+| join kind=inner (Costs 
+    | where MeterType == "Water")
+    on MeterType
+| extend WaterCost = Consumed * Cost
+| summarize TotalHouseholdWaterCost = sum(WaterCost) by HouseholdId
+| top 1 by TotalHouseholdWaterCost
+
+// HouseholdId          TotalHouseholdWaterCost
+// DTI2F75B61EE7818104	45.657449855813354
+
+// But there's a simpler way! Given that water has the same unit cost for everyone, we can just see which household consumed the most
+// which means we don't have to use join to find the total cost per household:
+
+Consumption
+| where MeterType == "Water"
+| summarize TotalHouseholdWaterConsumption = sum(Consumed) by HouseholdId
+| top 1 by TotalHouseholdWaterConsumption
+
+// HouseholdId          TotalHouseholdWaterConsumption
+// DTI2F75B61EE7818104	29230.12154661547
+
+
+
+// --------------------------------------------------------------------------------------------------
+// When was the date of the maximum electricity consumption?
+
+Consumption  
+| where MeterType == 'Electricity' 
+| summarize ElectricityConsumed=sum(Consumed) by bin(Timestamp, 1d) 
+| render timechart
+
+// or just
+
+Consumption
+| where MeterType == 'Electricity'
+| summarize ElectricityConsumed=sum(Consumed) by bin(Timestamp, 1d)
+| top 1 by ElectricityConsumed
+
+// Timestamp            ElectricityConsumed
+// 2023-04-26T00:00:00Z	3761740.9685032726
+
+
+
+// --------------------------------------------------------------------------------------------------
+// How many electricity readings were taken in total and what was the highest value?
+
+Consumption
+| where MeterType == 'Electricity'
+| summarize count(), max(Consumed)
+
+// count_    max_Consumed
+// 3808919	 51.58441562643816
+
+
+// --------------------------------------------------------------------------------------------------
+// What is the total bills amount due in April?
+
+// first, using:
+
+Consumption
+| summarize arg_min(Timestamp, *)
+
+// tells us that the first time stamp is on 2023-04-01T00:00:00Z and
+
+Consumption
+| summarize arg_max(Timestamp, *)
+
+// tells us that the last Timestamp is 2023-04-30T00:00:00Z. So everything is in April anyway, and 
+// this means we don't have to filter by timestamp. BUT recall that the challenge said that the
+// "citizens of Digitown are in an uproar. Their water and electricity bills have inexplicably doubled,
+// despite no changes in their consumption."
+// So to start, let's look at total cost again::
+
+Consumption
+| join kind=inner Costs on MeterType
+| summarize TotalCost=sum(Consumed * Cost)
+
+// But if costs have doubled for some citizens that means they might be getting billed twice, so let's
+// look at the total number of distinct readings:
+
+Consumption
+| distinct *
+| count 
+// 7571244
+
+// and compare it to the total number of readings like we did at the start (7617835), we see that there
+// are 46591 more readings. This means we can take the query for the TotalCost that we used at the start
+// but filter out the readings that are duplicated by only taking distinct readings:
+
+Consumption
+| distinct *
+| summarize TotalConsumed = sum(Consumed) by MeterType  
+| lookup Costs on MeterType  
+| extend TotalCost = TotalConsumed*Cost  
+| summarize sum(TotalCost)
+
+// sum_TotalCost
+// 35420282.61101136
+
+// This looks like it makes sense, because it's less than the total cost we calculated at the start which was 
+// 35637875.1977086. But it's still wrong! I tried another way by using join:
+
+Consumption
+| distinct *
+| join kind=inner (Costs
+    | summarize TotalConsumed = sum(Consumed) by MeterType)
+    on MeterType
+| extend TotalCost = TotalConsumed*Cost
+| summarize sum(TotalCost)
+
+// but that just gave the same answer! Scratching my head and looking for hints, I tried to find any weird readings for 
+// electricity and water by seeing if any were unusually high or unusually low:
+
+Consumption
+| where MeterType == "Water"
+| top 10 by Consumed
+
+// Timestamp            HouseholdId         MeterType	Consumed
+// 2023-04-13T00:00:00Z	DTI16EF08055242D7F3	Water	1138.6286381493717
+// 2023-04-12T00:00:00Z	DTI33005015CEA80042	Water	1113.9878519603033
+// 2023-04-17T00:00:00Z	DTI16EF08055242D7F3	Water	1095.7854124510047
+// 2023-04-24T00:00:00Z	DTI31D7ED352BED6005	Water	1088.7153698790587
+// 2023-04-25T00:00:00Z	DTI0F2D804DDB7A5BEF	Water	1078.884551461137
+// 2023-04-05T00:00:00Z	DTI3B505A56846D1D79	Water	1071.0619263640474
+// 2023-04-05T00:00:00Z	DTI53279F77696FA837	Water	1071.053425096406
+// 2023-04-05T00:00:00Z	DTI48E4779D93FD8F20	Water	1065.7373793304753
+// 2023-04-04T00:00:00Z	DTI413839FA1C311AFC	Water	1060.0286760665842
+// 2023-04-19T00:00:00Z	DTI278F1C86BDCD1262	Water	1058.2546439985513
+
+// nothing too unusual for the top consumers. All of them are within a quite narrow range. So let's look at the lowest:
+
+Consumption
+| where MeterType == "Water"
+| top 10 by Consumed asc 
+
+// Timestamp            HouseholdId         MeterType	Consumed
+// 2023-04-24T00:00:00Z	DTI532F10619A46A7F8	Water	-748.08245568889
+// 2023-04-21T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-746.184363219088
+// 2023-04-07T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-743.2843412550301
+// 2023-04-20T00:00:00Z	DTI532F10619A46A7F8	Water	-728.4056712169115
+// 2023-04-10T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-726.2736557580223
+// 2023-04-20T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-716.4435332520509
+// 2023-04-27T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-711.9126401545225
+// 2023-04-15T00:00:00Z	DTI532F10619A46A7F8	Water	-703.2989134142306
+// 2023-04-28T00:00:00Z	DTI532F10619A46A7F8	Water	-697.4521320006528
+// 2023-04-11T00:00:00Z	DTI1AC1DD5E1EEE87C2	Water	-692.48217769928
+
+// BUT the bottom consumers are negative! That means that some are getting over-charged for their bills and others might not
+// be getting charged at all! So let's run the query for TotalCost again, but this time we'll filter out the negative readings:
+
+Consumption
+| where Consumed > 0
+| distinct *
+| summarize TotalConsumed = sum(Consumed) by MeterType  
+| lookup Costs on MeterType  
+| extend TotalCost = TotalConsumed*Cost  
+| summarize sum(TotalCost)
+
+// sum_TotalCost
+// 35420883.07240318
+
+// which is the right answer! It's only a small difference to the original calculation of 35420282.61101136, but it's important to
+// filter out the negative values, as these are probably errors in the meter readings.

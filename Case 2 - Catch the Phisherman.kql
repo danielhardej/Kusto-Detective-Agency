@@ -1,76 +1,187 @@
+// Taking a glance at the data:
+
+PhoneCalls
+| take 100 
+
+// Timestamp            EventType	CallConnectionId	                    Properties
+// 2023-05-25T14:49:00Z	Connect	    c95a343d-2c95-4d8c-ba45-a838344eca24	{"Origin":"06275021931","Destination":"06679504677","IsHidden":false}
+// 2023-05-25T14:49:00Z	Disconnect	3957e772-78da-4620-b6d2-ac66b056afcf	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:01Z	Connect	    3ff06f30-559b-4781-bb0c-dfaa686204d6	{"Origin":"06596066141","Destination":"06455660308","IsHidden":true}
+// 2023-05-25T14:49:02Z	Disconnect	d536b721-afd3-45ef-9d46-61449fa74766	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:02Z	Disconnect	98be47ee-8300-4161-beee-afd47b0e0beb	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:04Z	Disconnect	3c20d537-5540-44b4-bd91-209b22adf961	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:05Z	Disconnect	d77101ca-3a37-42ce-ac7e-b2380e6902a3	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:05Z	Connect	    68d35215-125f-4d09-bf04-387d154cdbce	{"Origin":"06247665690","Destination":"06544441115","IsHidden":false}
+// 2023-05-25T14:49:05Z	Disconnect	58e4e73e-60e4-434f-81f1-af0003c94c77	{"DisconnectedBy":"Origin"}
+// 2023-05-25T14:49:07Z	Connect	    a10fef4c-f685-4811-b6d8-391074fd00b1	{"Origin":"06643158731","Destination":"06854953439","IsHidden":false}
+// 2023-05-25T14:49:08Z	Disconnect	a002d598-7e44-4d0c-a6d7-6994f14d58a6	{"DisconnectedBy":"Destination"}
+// 2023-05-25T14:49:08Z	Connect	    5faaa57f-3f30-4aad-8e1f-c731b070c70e	{"Origin":"06770153334","Destination":"06391891781","IsHidden":false}
+
+PhoneCalls 
+| where EventType == 'Connect' 
+| extend Origin=tostring(Properties.Origin), Destination=tostring(Properties.Destination), Hidden=tobool(Properties.IsHidden) 
+| take 10
+
+// // Timestamp         EventType   CallConnectionId	                Properties	                                                            Origin	    Destination	Hidden
+// 2023-05-25T14:49:13Z	Connect	832e3228-8d93-4e24-a0a9-71deb1e814c1	{"Origin":"06355943154","Destination":"06587917215","IsHidden":false}	06355943154	06587917215	false
+// 2023-05-25T14:49:17Z	Connect	e1bd9bfb-1ac7-42e2-8bf8-0ce7c0153426	{"Origin":"06606495518","Destination":"06627949965","IsHidden":false}	06606495518	06627949965	false
+// 2023-05-25T14:49:19Z	Connect	4dfb8ebb-fb85-4e88-87b8-5bfbfe92b826	{"Origin":"06511635664","Destination":"06748909215","IsHidden":false}	06511635664	06748909215	false
+// 2023-05-25T14:49:20Z	Connect	28bfb6d0-59e3-4c9a-a7d7-9b8b2ed7dcee	{"Origin":"06626682237","Destination":"06385564902","IsHidden":true}	06626682237	06385564902	true
+// 2023-05-25T14:49:23Z	Connect	8984d134-b234-449c-8ffd-c06ebbe0486a	{"Origin":"06898890898","Destination":"06733070347","IsHidden":false}	06898890898	06733070347	false
+// 2023-05-25T14:49:28Z	Connect	2eae6854-d072-4988-bc10-2e8d42096000	{"Origin":"06369233731","Destination":"06779393966","IsHidden":false}	06369233731	06779393966	false
+// 2023-05-25T14:49:54Z	Connect	c2b47d76-87a0-467c-b8a6-f12e811e7fd8	{"Origin":"06608013293","Destination":"06324332711","IsHidden":false}	06608013293	06324332711	false
+// 2023-05-25T14:49:54Z	Connect	fb28d29f-d7f8-48a5-83e3-1c36bb60f550	{"Origin":"06231611186","Destination":"06184728044","IsHidden":true}	06231611186	06184728044	true
+// 2023-05-25T14:49:56Z	Connect	8d892cc3-81b4-4dbd-9105-81cd88ff758b	{"Origin":"06378568203","Destination":"06101871678","IsHidden":false}	06378568203	06101871678	false
+// 2023-05-25T14:49:58Z	Connect	f5f43d21-e73a-4464-8cf0-91a9cd86cdb8	{"Origin":"06664018365","Destination":"06711533823","IsHidden":false}	06664018365	06711533823	false
+
+
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Use both equals (==) and 'has' operators to find the phone number that originated the most non hidden calls.
 
-    PhoneCalls
-    | where EventType=="Connect"
-    | extend Destination = tostring(Properties.Destination)
-    | extend Origin = tostring(Properties.Origin)
-    // didn't actually need those last two lines!
-    | where tobool(Properties.IsHidden)==false or Properties !has "IsHidden" // we want to find the number that originated the most non hidden calls
-    | summarize Count=count() by Phone=tostring(Properties.Origin)
-    | top 1 by Count
+// start off with this to find all hidden calls:
+PhoneCalls
+| where EventType == 'Connect'
+| where Properties has 'true'
 
-//Output:
+// then add to it to find the number that originated the most non hidden calls
+PhoneCalls
+| where EventType == 'Connect'
+| where Properties.IsHidden == 'false'
+| summarize count() by tostring(Properties.Origin)
+| top 1 by count_
 
+// Properties_Origin    count_
+// 06836757512	        342
+
+
+
+// ---------------------------------------------------------------------------------------------------------------------
 // What is the average and median (50th percentile) of calls per hour?
 
-    PhoneCalls
-    | where EventType=="Connect" // the question didn't actually specifiy that we should only look at connect events, so I initally looked at ALL calls, but looking back on it that makes sense!
-    | summarize Count=count() by Hour=bin(Timestamp, 1h)
-    | summarize Avg=avg(Count), Median=percentile(Count, 50) // median is the 50th percentile
-    | project Avg, Median
+// to start lets look at calls per hour
+PhoneCalls
+| summarize count() by bin(Timestamp, 1h)
+render timechart
 
-//Output:
-// Avg	Median
-// 49048	32069
+// then find the average calls per hour:
+PhoneCalls
+| summarize count() by bin(Timestamp, 1h)
+| summarize avg(count_)
+
+// then find the median calls per hour:
+PhoneCalls
+| summarize count() by bin(Timestamp, 1h)
+| summarize percentile(count_, 50)
+
+// or just do both in one go:
+PhoneCalls
+| summarize count() by bin(Timestamp, 1h)
+| summarize avg(count_), percentile(count_, 50)
+
+// avg_count_	        percentile_count_
+// 98095.63690476191	66690
+
+// that was wrong. They didn't specify it very clearly in the question, but it turns out that they wanted the average and median
+//  for Connected calls per hour:
+
+PhoneCalls
+| where EventType == 'Connect'
+| summarize count() by bin(Timestamp, 1h)
+| summarize avg(count_), percentile(count_, 50)
+
+// avg_count_	        percentile_count_
+// 49048	            32069
 
 
+
+// ---------------------------------------------------------------------------------------------------------------------
 // How many calls did Sally Sunshine (phone number 06309267053) receive and hang up on?
 
-    PhoneCalls
-    | where EventType=="Connect"
-    | where Properties.Destination == "06309267053"
-    | join kind=inner
-        (PhoneCalls
-        | where EventType=="Disconnect"
-        | extend DisconnectedBy = tostring(Properties.DisconnectedBy))
-        on CallConnectionId
-    | where DisconnectedBy == "Destination"
-    | count
+// start off by looking at all of the calls Ms Sunshine received:
+PhoneCalls
+| where tostring(Properties.Destination) == '06309267053'
 
-// Output:
+// But we only want the ones that she hung up on, so we join to a table that only includes Disconnect events
+// on the CallConnectionId column:
+
+PhoneCalls
+| where tostring(Properties.Destination) == '06309267053'
+| join kind=inner (
+    PhoneCalls
+    | where EventType == 'Disconnect'
+) on CallConnectionId
+| count
+
+// not quite - that shows the ones that she connected to, but not specifically the ones she received and hung up on
+
+PhoneCalls
+| where EventType == 'Connect'
+| where tostring(Properties.Destination) == '06309267053'
+| join kind=inner (PhoneCalls
+    | where EventType == 'Disconnect')
+    on CallConnectionId
+| where Properties1.DisconnectedBy == 'Destination'
+| count
+
+// Count
 // 16
 
 
+
+// ---------------------------------------------------------------------------------------------------------------------
 // What phone number is used for placing the phishing calls?
 
-    PhoneCalls 
-    | where EventType=="Connect"
-    | extend Destination = tostring(Properties.Destination)
-    | extend Origin = tostring(Properties.Origin)
-    | where Properties.IsHidden==true
-    | join kind=inner
-        (PhoneCalls
-        | where EventType=="Disconnect"
-        | extend DiscBy = tostring(Properties.DisconnectedBy)
-        | where DiscBy == "Destination")
-        on CallConnectionId
-    | summarize Ncalls=dcount(Destination) by Origin
-    // show the top 10 origin callers to show that the top one has by far the most and the next nine are quite close to eachother in number of calls
-    // indicating that the top one is the origin number of the scammer
-    | top 10 by Ncalls
+// first lets try to find the number that placed the most calls:
+PhoneCalls
+| summarize count() by tostring(Properties.Origin)
+| top 1 by count_
 
+// that number made 8240003 calls but it was hidden!
 
-//Output:
-// Origin	Scammer
-// 06784884765	186
-// 06749360920	50
-// 06836757512	46
-// 06824111174	44
-// 06131902860	42
-// 06904223620	42
-// 06827437897	42
-// 06616686612	42
-// 06671080069	42
-// 06888393421	42
+// Let's think about this. People probably hang up quickly on phishing calls, so we could try finding the origin number that
+// had the shortest calls and where the DisconnectedBy was the Destination
 
-// We can see that the top one is 06784884765 with 186 calls - far more than the next nine numbers, which all have around 40 to 50 call as the origin number.
+// to do this we'll need to do something similar to the Sally Sunshine question above: use a join to find connected calls
+// where the destination was the one that hung up:
+
+PhoneCalls
+| where EventType == 'Connect'
+| join kind=inner (PhoneCalls
+    | where EventType == 'Disconnect')
+    on CallConnectionId
+| where Properties1.DisconnectedBy == 'Destination'
+
+// then notice that we get two timestamps: one where the call connects and one where the call disconnects. We can use those
+// to calculate the duration of the call:
+
+PhoneCalls
+| where EventType == 'Connect'
+| join kind=inner (PhoneCalls
+    | where EventType == 'Disconnect')
+    on CallConnectionId
+| where Properties1.DisconnectedBy == 'Destination'
+| extend Duration = todouble(Timestamp1 - Timestamp)
+
+// I felt like that was going somewhere, but while it's easier to sort by origin number now, we have no idea about the duration
+// of a phishing call so we can't sort or count by duration. This doesn't consider the fact that the phishing calls may have 
+// been hidden too (which they probably were!)
+
+// Let's try something else. We know that the phishing calls were initially hidden, but if we join a table of disconnect events
+// to a table of phone calls that connected to a hidden caller on the CallConnectionId column, we can then find the number that 
+// made the most calls that were disconnected by the destination number:
+
+PhoneCalls
+| where EventType == 'Connect'
+| where Properties.IsHidden == 'true'
+| join kind=inner (PhoneCalls
+    | where EventType == 'Disconnect')
+    on CallConnectionId
+| where Properties1.DisconnectedBy == 'Destination'
+| summarize count() by tostring(Properties.Origin)
+| top 1 by count_
+
+// and there we go!
+
+// Properties_Origin    count_
+// 06784884765	        186
