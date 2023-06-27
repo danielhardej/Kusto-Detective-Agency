@@ -1,0 +1,310 @@
+
+
+Votes
+| take 100 
+
+// Timestamp	                    Vote	via_ip	        voter_hash_id
+// 2022-10-01T08:02:20.2791482Z	    Poppy	10.168.0.27	    8c7a6e8ab7
+// 2022-10-01T08:03:47.344871Z	    Kastor	10.168.27.139	92e524fc7f
+// 2022-10-01T08:07:14.4190385Z	    Poppy	10.168.0.86	    ee2af46829
+// 2022-10-01T08:08:51.7466683Z	    Kastor	10.168.11.244	769279b09d
+// 2022-10-01T08:11:27.0971368Z	    Poppy	10.168.0.136	3012f854fa
+// 2022-10-01T08:13:31.2309841Z	    Poppy	10.168.17.79	c94b21b4e5
+// 2022-10-01T08:30:57.3035813Z	    Poppy	10.168.1.112	d5fdaa2c16
+
+Votes
+| summarize Count=count() by vote
+
+// vote     Count
+// Poppy	2601570
+// Kastor	1285782
+// Gaul	    976570
+// Willie	166499
+
+// Hint 1: Are there any anomalies if you compare one server votes to another?
+
+Votes
+| summarize Count=count() by vote, bin(Timestamp, 1h), via_ip
+| sort by Count desc
+
+// vote     Timestamp	            via_ip	        Count
+// Poppy	2022-10-01T20:00:00Z	10.168.36.21	323
+// Poppy	2022-10-01T19:00:00Z	10.168.33.39	321
+// Poppy	2022-10-01T11:00:00Z	10.168.8.193	310
+// Poppy	2022-10-01T21:00:00Z	10.168.37.105	310
+// Poppy	2022-10-01T17:00:00Z	10.168.25.62	309
+// Poppy	2022-10-01T20:00:00Z	10.168.34.140	308
+// Poppy	2022-10-01T21:00:00Z	10.168.36.89	306
+// Poppy	2022-10-01T19:00:00Z	10.168.31.176	306
+// Poppy	2022-10-01T14:00:00Z	10.168.17.92	305
+// Poppy	2022-10-01T08:00:00Z	10.168.0.167	304
+// Poppy	2022-10-01T15:00:00Z	10.168.19.245	302
+
+// Find the number of unique IP adresses
+Votes
+| summarize dcount(via_ip)
+
+// dcount_via_ip
+// 10,326
+
+// Hint 2: Assuming Poppy the fish is very popular, it would be very strange 
+// if some regions show very low support numbers, don't you think?
+
+Votes
+| summarize Poppy = countif(vote=="Poppy"),
+    Kastor = countif(vote=="Kastor"),
+    Gaul = countif(vote=="Gaul"),
+    Willie = countif(vote=="Willie")
+    by via_ip
+| sort by Poppy desc
+
+// via_ip	        Poppy	Kastor	Gaul	Willie
+// 10.168.36.21	    331	    144	    106	    20
+// 10.168.33.39	    331	    119	    88	    14
+// 10.168.8.193	    21	    125	    101	    13
+// 10.168.36.89	    318	    135	    80	    17
+// 10.168.37.105	318	    125	    94	    19
+// 10.168.34.140	317	    123	    95	    6
+// 10.168.25.62	    317	    108	    92	    23
+
+Votes
+| summarize Poppy = countif(vote=="Poppy"),
+    Kastor = countif(vote=="Kastor"),
+    Gaul = countif(vote=="Gaul"),
+    Willie = countif(vote=="Willie")
+    by via_ip
+| sort by Poppy asc
+
+// via_ip	        Poppy	Kastor	Gaul	Willie
+// 10.168.39.222	4	    136	    109	    14
+// 10.168.39.251	4	    128	    96	    15
+// 10.168.39.207	4	    118	    85	    8
+// 10.168.39.82	    4	    136	    101	    22
+// 10.168.39.166	4	    110	    89	    21
+// 10.168.39.112	4	    113	    81	    23
+
+// A big thing that stands out is that Poppy is very popular in some IP addresses but not popular at all in others, while
+// the rest of the candidates' votes are quite evenly distributed. This is a sign that something is wrong with the Poppy votes,
+// and could be linked to the IP address.
+
+Votes
+| summarize Poppy = countif(vote=="Poppy"),
+    Kastor = countif(vote=="Kastor"),
+    Gaul = countif(vote=="Gaul"),
+    Willie = countif(vote=="Willie")
+    by via_ip
+| order by via_ip
+| render timechart
+
+
+// inseart timechart here
+
+// So clearly something is sus with a handful of the IP addresses, but I'm not sure what. Let's look at the IP addresses that
+// have the lowest number of votes for Poppy:
+
+Votes
+| summarize Poppy = countif(vote=="Poppy"),
+    Kastor = countif(vote=="Kastor"),
+    Gaul = countif(vote=="Gaul"),
+    Willie = countif(vote=="Willie")
+    by via_ip
+| order by Poppy asc 
+| where Poppy <= 20
+
+// only about 240 records have Poppy votes less than 20 and then it jumps up  rest have around 200 or more. Let's take the next 
+// hint because I'm not sure what to do with this information
+
+
+// Hint 3: What about voting times for a specific server and a specific candidate? Any anomaly can be observed there?
+
+Votes
+| summarize Count=count() by vote, bin(Timestamp, 1h), via_ip
+| sort by Count asc
+
+// That query didn't help much, but what about if we put it in a timechart:
+
+Votes
+| summarize Count=count() by vote, bin(Timestamp, 1h), via_ip
+| render timechart
+
+// not that helpful either. But we know that the Poppy votes are sus for just a few IP addresses, so let's look at those:
+
+Votes
+| summarize Poppy = countif(vote=="Poppy") by via_ip
+| order by Poppy asc 
+| where Poppy > 20
+
+// the first IP is 10.168.5.189, so let's look at that and look at the voting times
+
+Votes
+| where via_ip == "10.168.5.189"
+| summarize Poppy = countif(vote=="Poppy") by bin(Timestamp, 1h)
+
+// Timestamp	            Poppy
+// 2022-10-01T08:00:00Z	    0
+// 2022-10-01T09:00:00Z	    0
+// 2022-10-01T10:00:00Z	    183
+// 2022-10-01T11:00:00Z	    0
+// 2022-10-01T12:00:00Z	    1
+// 2022-10-01T13:00:00Z	    1
+// 2022-10-01T14:00:00Z	    3
+// 2022-10-01T15:00:00Z	    0
+// 2022-10-01T16:00:00Z	    0
+// 2022-10-01T17:00:00Z	    0
+// 2022-10-01T18:00:00Z	    1
+// 2022-10-01T19:00:00Z	    0
+// 2022-10-01T20:00:00Z	    1
+// 2022-10-01T21:00:00Z	    1
+
+// ah interesting! There's one hour where Poppy get's 183 votes, but the rest of the time it's between 0-3!
+// Let's focus in on that hour:
+
+Votes
+| where Timestamp between (datetime(2022-10-01T10:00:00Z) .. datetime(2022-10-01T11:00:00Z))
+| where via_ip == "10.168.5.189"
+| summarize Poppy = countif(vote=="Poppy") by bin(Timestamp, 1m)
+
+// Timestamp	        Poppy
+// 2022-10-01T10:00:00Z	0
+// 2022-10-01T10:03:00Z	183
+// 2022-10-01T10:05:00Z	0
+// 2022-10-01T10:09:00Z	0
+// 2022-10-01T10:12:00Z	0
+
+// Even more interesting - all the votes happened in 1 min at 2022-10-01T10:03:00! Let's look at the votes in that minute:
+
+Votes
+| where Timestamp between (datetime(2022-10-01T10:00:00Z) .. datetime(2022-10-01T11:00:00Z))
+| where via_ip == "10.168.5.189"
+| summarize Poppy = countif(vote=="Poppy") by bin(Timestamp, 1s)
+
+// Timestamp	        Poppy
+// 2022-10-01T10:00:40Z	0
+// 2022-10-01T10:03:23Z	5
+// 2022-10-01T10:03:24Z	33
+// 2022-10-01T10:03:25Z	47
+// 2022-10-01T10:03:26Z	26
+// 2022-10-01T10:03:27Z	41
+// 2022-10-01T10:03:28Z	31
+// 2022-10-01T10:05:21Z	0
+// 2022-10-01T10:09:01Z	0
+// 2022-10-01T10:12:09Z	0
+// 2022-10-01T10:13:28Z	0
+
+// And all of those votes happed within a few seconds between 2022-10-01T10:03:23Z and 2022-10-01T10:03:28Z. Something is 
+// definitely sus here. Let's look at another sketchy IP address just to be sure:
+
+Votes
+| where Timestamp between (datetime(2022-10-01T21:00:00Z) .. datetime(2022-10-01T22:00:00Z))
+| where via_ip == "10.168.37.105"
+| summarize Poppy = countif(vote=="Poppy") by bin(Timestamp, 1m)
+
+// Timestamp	        Poppy
+// 2022-10-01T21:01:00Z	0
+// 2022-10-01T21:06:00Z	0
+// 2022-10-01T21:09:00Z	0
+// 2022-10-01T21:16:00Z	0
+// 2022-10-01T21:17:00Z	0
+// 2022-10-01T21:24:00Z	309
+// 2022-10-01T21:27:00Z	0
+// 2022-10-01T21:36:00Z	0
+
+// It happened again! Let's look at what it should be for one of the other candiates:
+
+Votes
+| where Timestamp between (datetime(2022-10-01T00:00:00Z) .. datetime(2022-10-01T23:59:00Z))
+| where via_ip == "10.168.5.189" or via_ip == "10.168.37.105"
+| summarize Kastor = countif(vote=="Kastor") by bin(Timestamp, 1m)
+
+// Timestamp            Kastor
+// 2022-10-01T08:03:00Z	1
+// 2022-10-01T08:11:00Z	1
+// 2022-10-01T08:12:00Z	0
+// 2022-10-01T08:16:00Z	0
+// 2022-10-01T08:18:00Z	0
+// 2022-10-01T08:20:00Z	2
+// 2022-10-01T08:21:00Z	0
+// 2022-10-01T08:22:00Z	1
+// 2022-10-01T08:25:00Z	1
+// 2022-10-01T08:30:00Z	0
+// 2022-10-01T08:32:00Z	0
+// 2022-10-01T08:33:00Z	1
+
+// Looks like normal amount at around 0-2 votes in a given minute and at most no more than two, even when considering both 
+// of those IP addresses we just looked at:
+
+Votes
+| where Timestamp between (datetime(2022-10-01T00:00:00Z) .. datetime(2022-10-01T23:59:00Z))
+| where via_ip == "10.168.5.189" or via_ip == "10.168.37.105"
+| summarize Kastor = countif(vote=="Kastor") by bin(Timestamp, 1m)
+| sort by Kastor desc 
+
+// Timestamp            Kastor
+// 2022-10-01T16:09:00Z	2
+// 2022-10-01T16:48:00Z	2
+// 2022-10-01T21:40:00Z	2
+// 2022-10-01T17:39:00Z	2
+// 2022-10-01T08:20:00Z	2
+
+// After looking at that (and you can do the same for any of the other IP addresses or candidates), you start to see that 
+// 309 votes in one minute doesn't look feasible.
+
+// So based on the other candidates' votes, it's rare that there's more than one vote per minute per IP address. This means
+// that to level the playing field, we should consider the preposterous number of Poppy votes in one minute from one IP
+// as one vote (not 309)
+
+Votes
+| where vote == "Poppy"
+| distinct datetime_part("hour",Timestamp), datetime_part("minute",Timestamp), via_ip
+| summarize count()
+
+// 111623
+// Seems more reasonable than to original 2601570...
+
+// And for comparison...
+
+Votes
+| where vote == "Willie"
+| distinct datetime_part("hour",Timestamp), datetime_part("minute",Timestamp), via_ip
+| summarize count()
+
+// 164894
+
+// So we'll take that query just above for the distinct Poppy votes and create a table out of it:
+
+let _poppy_votes = Votes
+| where vote == "Poppy"
+| distinct datetime_part("hour",Timestamp), datetime_part("minute",Timestamp), via_ip;
+
+// And use smash it into the Votes table to replace the previous poppy votes and do the percentage calculation we were
+// given in the challenge:
+
+let _poppy_votes = Votes
+| where vote == "Poppy"
+| distinct datetime_part("hour",Timestamp), datetime_part("minute",Timestamp), via_ip, vote;
+Votes
+| where vote != "Poppy"
+| join (_poppy_votes) on via_ip
+| summarize Count=count() by vote
+| as hint.materialized=true T
+| extend Total = toscalar(T | summarize sum(Count))
+| project vote, Percentage = round(Count*100.0 / Total, 1), Count
+| order by Count
+
+// Initially I was being an idiot and tried to use join, but didn't know about the UNION operator:
+// https://techcommunity.microsoft.com/t5/security-compliance-and-identity/new-blog-post-must-learn-kql-part-19-the-join-operator/m-p/3165108
+// https://learn.microsoft.com/en-us/azure/data-explorer/kusto/query/unionoperator?pivots=azuredataexplorer
+
+let _poppy_votes = Votes
+| where vote == "Poppy"
+| distinct datetime_part("hour",Timestamp), datetime_part("minute",Timestamp), via_ip, vote;
+Votes
+| where vote != "Poppy"
+| union _poppy_votes
+| summarize Count=count() by vote
+| as hint.materialized=true T
+| extend Total = toscalar(T | summarize sum(Count))
+| project vote, Percentage = round(Count*100.0 / Total, 1), Count
+| order by Count
+
+// Congratulations Kastor! (Sorry Poppy.)
