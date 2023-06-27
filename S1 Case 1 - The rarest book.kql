@@ -1,0 +1,145 @@
+
+// This was supposed to be a great day for Digitown’s National Library Museum and all of Digitown.
+// The museum has just finished scanning more than 325,000 rare books, so that history lovers around the 
+// world can experience the ancient culture and knowledge of the Digitown Explorers.
+// The great book exhibition was about to re-open, when the museum director noticed that he can't locate the 
+// rarest book in the world:
+
+// "De Revolutionibus Magnis Data", published 1613, by Gustav Kustov.
+// The mayor of the Digitown herself, Mrs. Gaia Budskott - has called on our agency to help find the missing artifact.
+
+// Luckily, everything is digital in the Digitown library:
+// Each book has its parameters recorded: number of pages, weight.
+// Each book has RFID sticker attached (RFID: radio-transmitter with ID).
+// Each shelve in the Museum sends data: what RFIDs appear on the shelve and also measures actual total weight of books 
+// on the shelve.
+
+// Unfortunately, the RFID of the "De Revolutionibus Magnis Data" was found on the museum floor - detached and lonely.
+// Perhaps, you will be able to locate the book on one of the museum shelves and save the day?
+
+// -----------------------------------------------------------------------------------------------------------------------
+// Which shelf is the book on?
+
+// Let's start with the hint:
+
+Books
+| where author == "Gustav Kustov"
+
+// rf_id                            title                           year	author	language	pages	weight_gram
+// 0cbc13e0aa7d487e8e797d3de3823161	De Revolutionibus Magnis Data	1613	Gustav Kustov	lat	256	1764
+
+// Let's look at the next hint: Shelves data consist of book references (rf_ids) and the total weight of books measured 
+// by the shelve.
+
+Shelves 
+| where shelf == '5853' 
+| mv-expand rf_id = rf_ids to typeof(string) 
+| lookup Books on rf_id 
+| project shelf, author, book_title, total_weight, weight_gram
+
+// shelf	author	        book_title	                    total_weight	weight_gram
+// 5853		                Spartacus	                    61628	        325
+// etc etc...
+
+// a bit confusing - we have the total weight of books on the shelf on which we can find that book and the weight of 
+// each book on every row, but that's okay for now
+
+// For now, let's try looking where the book should be based on its rf_id
+
+Shelves
+| mv-expand rf_id = rf_ids to typeof(string)
+| where rf_id == '0cbc13e0aa7d487e8e797d3de3823161'
+| project shelf, total_weight, rf_id
+
+// nothing...
+
+// That'd be too obvious anyway. We get a hint in the main description of the challenge: "the shelve and also measures 
+// actual total weight of books on the shelve." and "Shelves’ weight measurement doesn’t have absolute precision, it’s 
+// probably has some skew percentage of the total weight it measures."
+// So let's look at the weights of the shelves...
+
+Shelves
+| mv-expand rf_id = rf_ids to typeof(string)
+| summarize sum(total_weight) by shelf
+
+// shelf	sum_total_weight
+// 1395	    2076282
+// 4251	    1558080
+// 3589	    2517360
+// 1833	    497079
+// 10498	209270
+// 7242	    3309504
+// 6837	    4166640
+
+// okay that's a little more helpful, but doesn't help us match anything to the book's rf_id. We know the total weight of
+// books on the shelf and the weight of each book. We can calculate the total weight of the books that should be on the shelf
+// (based on the rf_ids of the books that should be there) and then compare that with the measured weight of books on the
+// shelves.
+
+// First we'll need to do a join of the tables on the rf_id column:
+
+Shelves 
+| mv-expand rf_id = rf_ids to typeof(string)
+| join kind=inner (Books)
+    on rf_id
+
+// takes a while and we run out of memory, but we get a table with:
+// shelf    rf_ids  total_weight    rf_id   rf_id1  book_title   publish_date    author  language    number_of_pages   weight_gram
+
+// Since we know we can't find it based on rf_id, there's a lot of data we can ignore and distill it down to weight (since
+// we got a hint about that)...
+
+Shelves 
+| mv-expand rf_id = rf_ids to typeof(string)
+| join kind=inner (Books)
+    on rf_id
+| summarize sum(weight_gram) by shelf, total_weight
+
+// shelf    total_weight    sum_weight_gram
+// 6675	    52278	        52309
+// 1785	    52024	        52020
+// 1109	    50455	        50466
+// 1419	    51490	        51490
+
+// way more helpful: we can sort by shelf, expected weight (sum_weight_gram) and measured weight (total_weight).
+// The next thing to look at would be the discrepancy between expected weight and measured weight and see if 
+// we can find a shelf that has a discrepancy equal to or close to 1764 (the weight of the book, which we know from the
+// first query on the Books table)
+
+Shelves 
+| mv-expand rf_id = rf_ids to typeof(string)
+| join kind=inner (Books)
+    on rf_id
+| summarize sum(weight_gram) by shelf, total_weight
+| extend weight_diff = total_weight - sum_weight_gram
+
+// shelf    total_weight    sum_weight_gram weight_diff
+// 6675	    52278	        52309	        -31
+// 1785	    52024	        52020	        4
+// 1109	    50455	        50466	        -11
+// 1419	    51490	        51490	        0
+// etc etc.
+
+// Then sort by weight_diff:
+
+Shelves 
+| mv-expand rf_id = rf_ids to typeof(string)
+| join kind=inner (Books)
+    on rf_id
+| summarize sum(weight_gram) by shelf, total_weight
+| extend weight_diff = total_weight - sum_weight_gram
+| sort by weight_diff desc 
+
+// shelf    total_weight    sum_weight_gram weight_diff
+// 4242	    54008	        52210	        1798
+// 1131	    50351	        50301	        50
+// 6626	    50328	        50278	        50
+// 5655	    50148	        50098	        50
+// 616	    50644	        50594	        50
+// etc etc.
+
+// There it is! Shelf 4242 has a weight_diff of 1798, which is very close to the weight of the book we're looking for (not
+// exact, but recall our hint said "Shelves’ weight measurement doesn’t have absolute precision, it’s probably has some skew 
+// percentage of the total weight it measures.")
+// The rest of the differnces are in the range of +/- 50g, so we can be quite confident it's shelf 4242 as the difference between
+// weight_diff and the actual weight of the book falls within this range.
