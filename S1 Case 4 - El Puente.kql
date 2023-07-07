@@ -1,0 +1,139 @@
+// This one was such a headache, but it was pretty fun in the end.
+
+// first, let's grab the prime number from https://kustodetectiveagency.blob.core.windows.net/prime-numbers/prime-numbers.csv.gz 
+// and put it into a table called Numbers:
+.execute database script <|
+.create-merge table Numbers (Number:int)
+.clear table Numbers data
+.ingest async into table Numbers (@'https://kustodetectiveagency.blob.core.windows.net/prime-numbers/prime-numbers.csv.gz')
+
+// now, let's find the special primes. The Geeks for Geeks article (https://www.geeksforgeeks.org/special-prime-numbers/) was pretty good 
+// at explaining, but the tl;dr is that a given prime number is "special" if it satisfies the condition:
+// 1 + the_neighbouring_prime + the_next_neighbouring_prime = the_given_prime
+// or, put another way, if the given prime is the sum of the two primes before it, plus 1.
+
+// implementing this in Kusto was a bit tricky, but here's how I did it:
+
+let _special_primes = Numbers
+    | sort by Number
+    | extend special_prime=prev(Number, 1) + prev(Number, 2) + 1
+    | where special_prime < 100000000
+    | distinct special_prime;
+Numbers
+| join kind=inner _special_primes on $left.Number==$right.special_prime
+| summarize max(Number)
+
+// I suspect that adding another column called special_prime is a memory intensive way to do it, since I initially forgot 
+// to add a where clause to filter out any special primes that were greater than 100,000,000. This threw a memory error
+// because the query would try to go on forver. But it works and you can apply that formula above pretty easily. 
+// Adding the where < 100000000 clause fixed the memory error, and we dont care about anything bigger than 100,000,000 anyway.
+// so now on to getting our next hint..
+
+// running that gets us two new things: a table called nyc_trees and a set of functions. Let's take a look:
+
+nyc_trees
+| take 100 
+
+// lots of columns, lots of data. But we've got a hint:
+// "there is a special place with Turkish Hazelnut and four Schubert Chokecherries within 66-meters radius area."
+// So lets write a query that can help us find that...
+// we've got common name (spc_common) and longitude and latitude. So let's use those.
+
+// having to do a little wrangling with "like" and "contains", since the common name is case sensitive and we need to match it
+// we find that the two trees we're interested in are spelt like this:
+
+nyc_trees
+| where spc_common == "Turkish hazelnut" or spc_common == "'Schubert' chokecherry"
+// and count the numbers of each
+| summarize count() by spc_common
+
+// aaaand this is where I got really stumped.
+
+let _turkish_hazelnuts = nyc_trees
+    | where spc_common == "Turkish hazelnut"
+    | project spc_common, longitude, latitude;
+let _schubert_chokecherries = nyc_trees
+    | where spc_common == "'Schubert' chokecherry"
+    | project spc_common, longitude, latitude;
+_turkish_hazelnuts
+| join kind=fullouter _schubert_chokecherries on $left.spc_common==$right.spc_common
+| where geo_distance_2points(longitude, latitude, longitude1, latitude1) < 66
+
+let _turkish_hazelnuts = nyc_trees
+    | where spc_common == "Turkish hazelnut"
+    | project spc_common, longitude, latitude;
+let _schubert_chokecherries = nyc_trees
+    | where spc_common == "'Schubert' chokecherry"
+    | project spc_common, longitude, latitude;
+_turkish_hazelnuts
+| join kind=fullouter _schubert_chokecherries on $left.spc_common==$right.spc_common
+| where geo_point_in_circle(longitude, latitude, longitude1, latitude1, 66)
+
+
+// Literally went through all of the geo functions to try to figure out how to do this
+// https://learn.microsoft.com/en-us/azure/data-explorer/kusto/query/geospatial-grid-systems
+// If we look at the docs for geo_point_to_h3cell() we can see that it takes a longitude and latitude and returns a string
+// value of a geographical location.
+// AND in the notes in tells us "H3 Cell can be a useful geospatial clustering tool."
+// AND in the H3 Cell approximate area coverage per resolution value table, we can see that a resolution of 10 gives us an
+// average hexagon lenth of 66 meters...
+
+let _turkish_hazelnuts = nyc_trees
+    | where spc_common == "Turkish hazelnut"
+    | project spc_common, longitude, latitude;
+let _schubert_chokecherries = nyc_trees
+    | where spc_common == "'Schubert' chokecherry"
+    | project spc_common, longitude, latitude;
+_turkish_hazelnuts
+| join kind=fullouter _schubert_chokecherries on $left.spc_common==$right.spc_common
+| where geo_point_to_h3cell(longitude, latitude, 10) == geo_point_to_h3cell(longitude1, latitude1, 10)
+
+// nothing... Let's go back to basics
+
+nyc_trees
+| where spc_common == "Turkish hazelnut" or spc_common == "'Schubert' chokecherry"
+| extend h3_cell = geo_point_to_h3cell(longitude, latitude, resolution=10)
+| summarize count_schubert=countif(spc_common == "'Schubert' chokecherry"), count_turkish=countif(spc_common == "Turkish hazelnut") by h3_cell
+| where count_schubert == 4 and count_turkish == 1
+
+// I didn't think that would actually work...
+
+// but I nearly forgot that "near the smallest American Linden tree (within the same area)" so we want to make sure that
+// this area has at least one American Linden tree in it. So let's add that to our query:
+
+nyc_trees
+| where spc_common == "Turkish hazelnut" or spc_common == "'Schubert' chokecherry" or spc_common == "American linden"
+| extend h3_cell = geo_point_to_h3cell(longitude, latitude, resolution=10)
+| summarize count_schubert=countif(spc_common == "'Schubert' chokecherry"), count_turkish=countif(spc_common == "Turkish hazelnut"), count_linden=countif(spc_common == "American linden") by h3_cell
+| where count_schubert == 4 and count_turkish == 1
+
+// it has two! so let's look at the details of the trees that are in our little area, then see which one is the smallest
+
+nyc_trees
+| where spc_common == "Turkish hazelnut" or spc_common == "'Schubert' chokecherry" or spc_common == "American linden"
+| extend h3_cell = geo_point_to_h3cell(longitude, latitude, resolution=10)
+| where h3_cell == "8a2a100dec9ffff"
+| order by tree_dbh asc
+
+// or stright to the point:
+nyc_trees
+| where spc_common == "American linden"
+| extend h3_cell = geo_point_to_h3cell(longitude, latitude, resolution=10)
+| where h3_cell == "8a2a100dec9ffff"
+| order by tree_dbh asc
+
+// 40.71222313	-73.96452201
+
+// here I was a bit confused. Now what? Well we had this in the secret hint:
+// Get a virtual tour link with Latitude/Longitude coordinates
+.create-or-alter function with (docstring = "Virtual tour starts here", skipvalidation = "true") VirtualTourLink(lat:real, lon:real) { 
+	print Link=strcat('https://www.google.com/maps/@', lat, ',', lon, ',4a,75y,32.0h,79.0t/data=!3m7!1e1!3m5!1s-1P!2e0!5s20191101T000000!7i16384!8i8192')
+}
+
+// and if we start typing "VirtualTourLink" we can see that it takes a latitude and longitude as parameters
+VirtualTourLink(40.71222313,	-73.96452201)
+// we get
+// https://www.google.com/maps/@40.71222313,-73.96452201,4a,75y,32.0h,79.0t/data=!3m7!1e1!3m5!1s-1P!2e0!5s20191101T000000!7i16384!8i8192
+
+// and the rest shouldn't be too hard (but does take a little bit of looking around!!)
+// find the decryption key from the Google Street view to figure the rest out, use the Decrypt function and you've got it!

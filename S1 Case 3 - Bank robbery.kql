@@ -1,0 +1,170 @@
+// We have a situation, rookie.
+// As you may have heard from the news, there was a bank robbery earlier today.
+// In short: the good old downtown bank located at 157th Ave / 148th Street has been robbed.
+// The police were too late to arrive and missed the gang, and now they have turned to us to help locating the gang.
+// No doubt the service we provided to the mayor Mrs. Gaia Budskott in past - helped landing this case on our table now.
+
+// Here is a precise order of events:
+
+// 08:17AM: A gang of three armed men enter a bank located at 157th Ave / 148th Street and start collecting the money from the clerks.
+// 08:31AM: After collecting a decent loot (est. 1,000,000$ in cash), they pack up and get out.
+// 08:40AM: Police arrives at the crime scene, just to find out that it is too late, and the gang is not near the bank. The city is sealed - all vehicles are checked, robbers can't escape. Witnesses tell about a group of three men splitting into three different cars and driving away.
+// 11:10AM: After 2.5 hours of unsuccessful attempts to look around, the police decide to turn to us, so we can help in finding where the gang is hiding.
+
+// Police gave us a data set of cameras recordings of all vehicles and their movements from 08:00AM till 11:00AM. Find it below.
+
+// Let's cut to the chase. It's up to you to locate gang’s hiding place!
+// Don't let us down!
+
+// Let's get to work! Start by taking glance at the data:
+
+Traffic
+| take 10
+
+// Timestamp            VIN         Ave Street
+// 2022-10-16T10:16:00Z	XC63690349	109	99
+// 2022-10-16T10:16:00Z	AZ2234CE9E	168	85
+// 2022-10-16T10:16:00Z	PK0FD14A4A	101	67
+// 2022-10-16T10:16:00Z	UF1221C27B	128	175
+// 2022-10-16T10:16:00Z	XC8E1FA5A6	132	226
+// 2022-10-16T10:16:00Z	YB81743BEE	232	94
+// 2022-10-16T10:16:00Z	CXAC710C67	165	177
+// 2022-10-16T10:16:00Z	NMDF4E2645	46	80
+// 2022-10-16T10:16:00Z	OL5D04676F	201	132
+// 2022-10-16T10:16:00Z	RI6BA7BE6F	187	97
+
+// lets find out how many records we have in this dataset:
+Traffic
+| count
+
+// hint 1: The data is captured by cameras for moving vehicles, and it includes: Timestamp, the Vehicle plate (VIN), and the location of the camera on the (Ave/Street) grid.
+// Not that helpful...
+
+// Hint 2: The bank is located in the center of the city – lots of traffic in the morning. However, we can be certain that 
+// the cars that gang used – were not moving during the robbery. Perhaps this can help in reducing the list of suspects?
+// That's good! Let's look at the cars at the bank's location between 8:17 and 8:31:
+
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+
+// Awesome! We've narrowed down from 114736694 to 313 records! Let's see if we can narrow it down even further.
+
+// Hint 3: If the gang split into several cars, perhaps they still had an agreed place where all of them will reunion to divide the loot?
+// So lets find out if any cars were at the same location at the same time, then went to the same location after 8:31:
+
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+| join kind=inner (
+    Traffic
+    | where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T11:00:00Z))
+) on VIN
+
+// Doesn't really narrow it down. Let's try another way:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN;
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T11:00:00Z))
+| where VIN in (_cars_at_bank)
+
+// still leaves us with 39115 records, but this way we can see where all of the cars that were at the bank ended up
+// after the robbery. We can't see any patterns with this query, but with arg_max(Timestamp, *) we can see the last
+// place each car was seen:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN;
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T11:00:00Z))
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp, *) by VIN
+
+// okay, now lets see if any 3 cars were at the same location at the same time after 8:31:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN;
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T11:00:00Z))
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp, *) by VIN
+| summarize count() by Ave, Street
+| where count_ >= 3
+
+// That didn't give me anything. I realised that count() was just going to give us a count of the number of times we see
+// each individual VIN, rather than the total number of VINs at a given location, so we had to add a line to count the
+// number of VINs at each location:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:17:00Z) .. datetime(2022-10-16T08:31:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN;
+Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T11:00:00Z))
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp, *) by VIN, Ave, Street
+| summarize count() by Ave, Street
+| where count_ == 3
+
+// Hmmm, okay but now we have 1233 cases where three cars ended up in the same location...
+
+// A shot in the dark that turned out to get us closer was to consider that the robbers left between 8:31 and 8:40, so we can
+// consider those as our timestamps instead:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T08:40:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN;
+Traffic
+| where Timestamp > datetime(2022-10-16T08:31:00Z)
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp , *) by VIN
+| summarize count() by Ave, Street
+| where count_ == 3
+
+// spits out two results - a narrow enough list that we can just try both.
+// BUT what can we do to narrow it down to just one? Well, we know that the robbers left between 8:31 and 8:40, so there's
+// no point looking at the next destination of any cars that were seen BEFORE 8:40. So we can just modify the query to:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T08:40:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN
+| summarize vins = make_list(VIN);
+Traffic
+| where Timestamp > datetime(2022-10-16T08:40:00Z)
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp , *) by VIN
+| summarize count() by Ave, Street
+| where count_ == 3
+
+// and there you go!
+
+// But what to do about finding the VINs? Well, we can just add make_set() to our summarize to get a list of VINs:
+
+let _cars_at_bank = Traffic
+| where Timestamp between (datetime(2022-10-16T08:31:00Z) .. datetime(2022-10-16T08:40:00Z))
+| where Ave == 157 and Street == 148
+| distinct VIN
+| summarize mylist = make_list(VIN);
+Traffic
+| where Timestamp > datetime(2022-10-16T08:40:00Z)
+| where VIN in (_cars_at_bank)
+| summarize arg_max(Timestamp , *) by VIN
+| summarize possible_robbers=make_set(VIN), count() by Ave, Street
+| where count_ == 3
+
+// ["XC2952A7FB","RI8E6C4294","CXDE148D63"]
+
+// something else I saw was creating a timechart that shows the directions that the cars went in after leaving the bank:
+
+Traffic
+| where VIN in ("XC2952A7FB", "RI8E6C4294", "CXDE148D63")
+| project-away Timestamp
+| render scatterchart

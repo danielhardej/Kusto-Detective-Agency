@@ -1,0 +1,302 @@
+
+
+// Hint 1: The data from the chat-server shows what actions users perform. Actions include messaging from one user to 
+// another, joining / leaving channels, and sending messages to the channels. Try to think like a gang member: how would 
+// you use chat-server for recurrent syncs?
+
+ChatLogs
+| take 10 
+
+ChatLogs
+| take 10
+| extend user=extract('[a-z0-9]{11}', 0, Message)
+
+// extend to IP address
+ChatLogs
+| take 10
+| extend user=extract('[a-z0-9]{11}', 0, Message)
+| extend IP = extract('(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))',1,Message) 
+
+
+// from what I can find, there are 6 different types of actions:
+// user sends a message to a channel
+// user sends a message to another user
+// user joins a channel
+// user leaves a channel
+// user logs in
+// user logs out
+
+// lets try to extract these actions into their own groups. Luckily, all of the messages are formatted in a similar way
+// so we can use the same regex to extract the information we need
+
+let _sent_message_to_channel = ChatLogs
+    | where Message has "sent message to the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",7))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _sent_message_to_user = ChatLogs
+    | where Message has "sent message to the user"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend user2str = tostring(split(Message, " ",7))
+    | extend user2 = extract('[a-z0-9]{11}', 0, user2str);
+let _logins= ChatLogs
+    | where Message has "logged in"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend IP = extract('(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))',1,Message);
+let _logged_out = ChatLogs
+    | where Message has "logged out"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str);
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _leave_channel = ChatLogs
+    | where Message has "left the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+
+// find channels that have four users
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+ChatLogs
+| join kind=inner _join_channel on Message
+| summarize channel_join_count=count() by channel
+| where channel_join_count == 4
+
+
+ChatLogs
+| join kind=inner _join_channel on Message
+| summarize count() by channel, bin(Timestamp, 1h)
+| where count_ == 4
+| distinct channel
+
+// making it a variable
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _four_user_channels = ChatLogs
+    | join kind=inner _join_channel on Message
+    | summarize channel_join_count=count() by channel
+    | where channel_join_count == 4;
+
+// now find channels where the users joined within the same hour
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+ChatLogs
+| join kind=inner _join_channel on Message
+| extend hour = hourofday(Timestamp)
+| summarize hours_of_joining = make_set(hour) by channel
+| where array_length(hours_of_joining) == 1
+
+// now find channels where the users joined within the same hour AND have four users. My favorite way would be using
+// JOIN or UNION, but I will acknowledge that there could be better ways to do this that I haven't figured out yet.
+
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _four_user_channels = ChatLogs
+    | join kind=inner _join_channel on Message
+    | summarize channel_join_count=count() by channel
+    | where channel_join_count == 4;
+let _joined_channel_one_hour = ChatLogs
+    | join kind=inner _join_channel on Message
+    | extend hour = hourofday(Timestamp)
+    | summarize hours_of_joining = make_set(hour) by channel
+    | where array_length(hours_of_joining) == 1;
+_four_user_channels
+| join kind=inner _joined_channel_one_hour on channel
+
+
+// This gives is one channel! Is it the one we're looking for?
+// c48c3383d3e	4	c48c3383d3e	[12]
+
+// I'm just gonna pause for a moment and acknowledge that it wasn't completely necessary to write variables that contained tables for each
+// different type of action; however, I still think it was useful as it helped me understand the problem better and sort out all of the 
+// possible actions that could be taken.
+
+// that led nowhere. So it looks like that was a red herring. I noticed that the same users can join a channel multiple times
+// so I'm going to try to find channels where the same users joined multiple times within the same hour
+
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+ChatLogs
+| join kind=inner _join_channel on Message
+| extend hour = hourofday(Timestamp)
+| summarize hours_of_joining = make_set(hour) by channel, user1
+| where array_length(hours_of_joining) == 1
+
+// okay now finding channels where only four users joined within the same hour
+
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend user1str = tostring(split(Message, " ",1))
+    | extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _joined_channel_one_hour = ChatLogs
+    | join kind=inner _join_channel on Message
+    | extend hour = hourofday(Timestamp)
+    | summarize hours_of_joining = make_set(hour) by channel, user1
+    | where array_length(hours_of_joining) == 1;
+_joined_channel_one_hour
+| summarize channel_join_count=count() by channel
+| where channel_join_count == 4
+
+// but I forgot to add the condition that the channels and users joining must be unique. So I'm going to try to add that in 
+// by tweaking the definition of the first variable
+
+let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user =extract('[a-z0-9]{11}', 0, userstr)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr);
+let _joined_channel_one_hour = _join_channel
+    | extend join_hour = hourofday(Timestamp)
+    | summarize join_hours = make_set(join_hour) by channel, user
+    | where array_length(join_hours) == 1;
+let _joined_unique_channel = _joined_channel_one_hour
+    | distinct channel, user;
+_joined_unique_channel
+| summarize users_in_channel = count() by channel
+| where users_in_channel == 4
+
+/// AAAAAHH! Still no closer.
+
+// Thinking about Hint 1... Are there any channels where people join but don't leave
+
+ChatLogs
+| where Message has "joined the channel"
+| extend userstr = tostring(split(Message, " ",1))
+| extend user =extract('[a-z0-9]{11}', 0, userstr)
+| extend channelstr = tostring(split(Message, " ",5))
+| extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+| summarize count() 
+    // 301349
+ChatLogs
+| where Message has "left the channel"
+| extend user1str = tostring(split(Message, " ",1))
+| extend user1 =extract('[a-z0-9]{11}', 0, user1str)
+| extend channelstr = tostring(split(Message, " ",5))
+| extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+| summarize count() 
+    // 301263
+
+
+ let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user = extract('[a-z0-9]{11}', 0, userstr)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+    | summarize n_joined_1hr=count() by bin(Timestamp, 1h), channel
+    | where n_joined_1hr == 4
+    | summarize by channel, n_joined_1hr;
+let _leave_channel = ChatLogs
+    | where Message has "left the channel"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user = extract('[a-z0-9]{11}', 0, userstr)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+    | summarize n_left_1hr=count() by bin(Timestamp, 1h), channel
+    | where n_left_1hr == 4
+    | summarize by channel, n_left_1hr;
+_join_channel 
+| join kind=innerunique _leave_channel on channel
+
+
+// one minor change, using 'm' instead of 'h' for the join channel Timestamp bin:
+ let _join_channel = ChatLogs
+    | where Message has "joined the channel"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user = extract('[a-z0-9]{11}', 0, userstr)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+    | summarize n_joined_1hr=count() by bin(Timestamp, 1m), channel
+    | where n_joined_1hr == 4
+    | summarize by channel, n_joined_1hr;
+let _leave_channel = ChatLogs
+    | where Message has "left the channel"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user = extract('[a-z0-9]{11}', 0, userstr)
+    | extend channelstr = tostring(split(Message, " ",5))
+    | extend channel = extract('[a-z0-9]{11}', 0, channelstr)
+    | summarize n_left_1hr=count() by bin(Timestamp, 1h), channel
+    | where n_left_1hr == 4
+    | summarize by channel, n_left_1hr;
+_join_channel 
+| join kind=innerunique _leave_channel on channel
+
+// This was another thing that felt like a bit of a shot in the dark. The rationale was that the join and leave events would
+// happen in a short space of time.
+
+// We'll just take a quick glance to see if the activity does look strange:
+
+let _sus_users = ChatLogs
+| where Message has "cf053de3c7b"
+// and then get the users
+| extend userstr = tostring(split(Message, " ",1))
+| extend user = extract('[a-z0-9]{11}', 0, userstr)
+| extend user = extract('[a-z0-9]{11}', 0, userstr)
+| distinct user;
+
+// okay, now the question needs the IP address. Maybe dividing the data into all the different types of action did turn out
+// to be useful after all:
+
+let _sus_users = ChatLogs
+| where Message has "cf053de3c7b"
+| extend userstr = tostring(split(Message, " ",1))
+| extend user = extract('[a-z0-9]{11}', 0, userstr)
+| distinct user;
+let _logins= ChatLogs
+    | where Message has "logged in"
+    | extend userstr = tostring(split(Message, " ",1))
+    | extend user =extract('[a-z0-9]{11}', 0, userstr)
+    | extend IP = extract('(([0-9]{1,3})\\.([0-9]{1,3})\\.([0-9]{1,3})\\.(([0-9]{1,3})))',1,Message);
+_logins
+| where user in (_sus_users)
+| distinct user, IP
+
+// remember from the previous case we got this at the end...
+"print_0": Impressive, you got it right! Something BIG is going to happen...
+Keep the next hint close to you, it will help you. We will be in touch soon.
+El Puente.
+
+wytaPUJM!PS:2,7,17,29,42,49,58,59,63
+
+// and in this case, we get:
+// ```
+// PS:
+// Feeling uncomfortable and wondering about an elephant in the room: why would I help you?
+// Nothing escapes you, ha?
+// Let’s put it this way: we live in a circus full of competition. I can use some of your help, and nothing breaks if you use mine... You see, everything is about symbiosis.
+// Anyway, what do you have to lose? Look on an illustrated past, fast forward N days and realize the future is here.
+// ```
+
+// Go figure...
